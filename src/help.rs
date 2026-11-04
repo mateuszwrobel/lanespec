@@ -55,13 +55,26 @@ commands:
              PRUNE-* line per removal or refusal. Scratch dirs are never touched.
   audit [--json] [--repo PATH]
              Dump debris: orphan lanes, class fleets, lock holders, ahead-count,
-             stale worktrees, sentinel age hints. Exit 3 on debris.
+             stale worktrees, sentinel age hints. Exit 3 on debris. Never
+             removes anything: the listing is advisory.
   plan [--json] [--repo PATH]
              Ordered recovery steps for the debris the audit finds. Exit 0.
   sweep [--class NAME]
              Kill only parent-gone-proven processes; --namespace/--class required.
   unlock [deadline]
              Resolve gate-lock holders: await live, kill orphan chains, refuse races.
+  prune-orphans [--dry-run] [--repo PATH]
+             The orphan oracle. Classify every registered worktree and remove
+             ONLY carriers whose POSITIVE owner attribution — the path is named
+             in a lane record — is proven dead by the process table. Removal
+             fires only under this explicit verb, never automatically, and
+             never from a stale listing: every guard re-runs at removal time
+             (freshness scan, main exclusion, dirty, containment, bounded
+             mount scan, salvage pin + HEAD-reflog copy). Plain
+             'git worktree remove', never --force; one named PRUNE-ORPHAN-*,
+             PRUNE-* or PROTECT-* line per action. A present checkout named in
+             no record is PROTECT-UNATTRIBUTABLE: never removed, only shown
+             (exit 3). --dry-run prints the listing and touches nothing.
   retry <name> --cmd CMD [--success-cmd CMD] [--attempts N] [--space S] [--inline]
              Detached retry ladder: yield-guard, spaced attempts, .final sentinel.
   help [topic]
@@ -74,12 +87,16 @@ pub const EXIT_CODES: &str = "\
 Scripts branch on these numbers.
 
    0   Success, or nothing to report. Also: status and plan exit 0 even when
-       they REPORT debris; only audit encodes debris in the code.
+       they REPORT debris; only audit and prune-orphans encode debris in the
+       code.
    1   Generic failure or refusal: bad input, unknown lane or class, a
        wait-timeout while a live holder refused, a collect refusal (the
-       record is kept), or an unreadable process table.
-   3   audit found debris (an orphan lane, class fleet, lock holder, or stale
-       worktree). Only audit emits this code; it has exactly one meaning.
+       record is kept), a prune-orphans guard refusal (the worktree is
+       kept), or an unreadable process table.
+   3   Debris found. audit: an orphan lane, class fleet, lock holder, or
+       stale worktree. prune-orphans: an operator-visible PROTECT line
+       (unattributable checkout, dirty-unlanded, ahead-unlanded). Only
+       these two verbs emit this code; it has exactly one meaning.
    4   launch refused: the lane already exists (live or done). Reap it first.
    5   sweep refused: no --namespace or --class bound was given, or a given
        bound was empty.
@@ -145,6 +162,22 @@ pub const DIAGNOSTICS: &str = "\
       The audit found an orphan lane, an orphan class fleet, an orphan lock
       holder, or a stale worktree. Run 'lanespec plan' for ordered steps, then
       reap or sweep as they name.
+  prune-orphans PROTECT-UNATTRIBUTABLE       (exit 3)
+      A present checkout is named in no lane record: the owner is UNKNOWN,
+      never absent. Removal requires positive attribution proven dead, so
+      this verb never removes it. Its creator (or an operator who has
+      verified the work landed) removes it with 'git worktree remove'.
+  prune-orphans PROTECT-DIRTY / PROTECT-AHEAD (exit 3)
+      A proven-dead lane left uncommitted work or unmerged commits in its
+      carrier: a bug shape. Recover the work first (commit and land it, or
+      discard it with its author), then run the verb again.
+  prune-orphans PROTECT-MOUNT / PROTECT-MOUNT-SCAN (exit 1)
+      A container-leg bind mount sits at or under the checkout, or the
+      bounded mount scan could not answer. Nothing was removed. Wait for the
+      leg's exit, or fix the /proc access, then run the verb again.
+  prune-orphans refused: gate lock busy      (exit 1)
+      Another leg holds the gate lock and the oracle never queues behind it.
+      Re-run once the lock is free (see 'lanespec unlock').
   wait: lane died without .done              (exit 1, DEAD notice)
       The lane's process is gone but left no .done sentinel. Run 'lanespec reap'
       or 'lanespec audit'; once the group is proven gone, 'lanespec collect

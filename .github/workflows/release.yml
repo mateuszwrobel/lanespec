@@ -1,22 +1,42 @@
-name: Release
+name: Release lanespec binaries
 
 on:
   push:
     tags:
       - 'lanespec-v*'
 
+# Republish-freeze law (ADR-051): one run per tag at a time, never cancelled.
+# The reusable matrix's publish-gate job refuses a run whose version is
+# already on npm BEFORE any build or upload touches the release page.
+concurrency:
+  group: lanespec-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
+  # The publish-gate and the five platform builds live in the reusable
+  # matrix so a rehearsal can run the identical jobs on an untagged ref
+  # without ever reaching this file's release/npm jobs. Needs graph order:
+  # gate → five builds → release → publish-npm.
+  build-matrix:
+    uses: ./.github/workflows/build-matrix.yaml
+    with:
+      ref_name: ${{ github.ref_name }}
+
   release:
+    needs: build-matrix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
-
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Create the release page from the annotated tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -24,8 +44,112 @@ jobs:
           set -euo pipefail
           notes="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")"
           gh release create "${GITHUB_REF_NAME}" --verify-tag \
-            --title "lanespec ${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
             --notes "${notes}" \
             || gh release edit "${GITHUB_REF_NAME}" \
-              --title "lanespec ${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
               --notes "${notes}"
+
+      - name: Attach the built assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          gh release view "${GITHUB_REF_NAME}" --json assets -q '.assets[].name'
+
+  # npm channel (ADR-051): one downloader package per release, published via
+  # npm Trusted Publishing — OIDC from the runner, no NPM_TOKEN anywhere.
+  # The republish-freeze refusal already happened in the matrix's
+  # publish-gate; this job fails closed on scope, npm floor, token presence,
+  # asset totality, sidecar verifiability and — after publish — on
+  # provenance.
+  publish-npm:
+    needs:
+      - build-matrix
+      - release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: npm floor assert (trusted publishing needs npm >= 11.5.1)
+        run: |
+          set -euo pipefail
+          npm_v="$(npm --version)"
+          if [ "$(printf '%s\n' 11.5.1 "${npm_v}" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "npm ${npm_v} is below the 11.5.1 trusted-publishing floor — older npm silently falls back to token auth" >&2
+            exit 1
+          fi
+      - name: No token present (trusted publishing only)
+        run: |
+          set -euo pipefail
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NODE_AUTH_TOKEN is set in this environment — token auth would silently win over OIDC; unset it" >&2
+            exit 1
+          fi
+      - name: Resolve scope (fails closed when the channel is unconfigured)
+        id: scope
+        env:
+          NPM_SCOPE: ${{ vars.NPM_SCOPE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_SCOPE:-}" ]; then
+            echo "vars.NPM_SCOPE is unset — the npm channel is not configured; see the first-publish runbook" >&2
+            exit 1
+          fi
+          echo "scope=${NPM_SCOPE}" >> "$GITHUB_OUTPUT"
+      - name: Download the five matrix assets by exact name (fail closed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#lanespec-v}"
+          mkdir -p assets
+          for name in \
+            "lanespec-${ver}-x86_64-unknown-linux-musl.tar.gz" \
+            "lanespec-${ver}-aarch64-unknown-linux-gnu.tar.gz" \
+            "lanespec-${ver}-x86_64-apple-darwin.tar.gz" \
+            "lanespec-${ver}-aarch64-apple-darwin.tar.gz" \
+            "lanespec-${ver}-x86_64-pc-windows-msvc.zip"; do
+            if ! gh release download "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" -D assets -p "$name"; then
+              echo "publish-npm: the release carries no asset named $name — failing closed, no package version is published" >&2
+              exit 1
+            fi
+          done
+      - name: Download the rest and verify every shipped sidecar passes sha256sum -c
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" -D assets || true
+          cd assets
+          found=0
+          for sidecar in *.sha256; do
+            [ -e "${sidecar}" ] || continue
+            sha256sum -c "${sidecar}"
+            found=$(( found + 1 ))
+          done
+          # One sidecar per installable: five archives plus two debs.
+          [ "${found}" -ge 7 ] || { echo "publish-npm: only ${found} sidecars on the release page — expected at least one per installable" >&2; exit 1; }
+      - name: Generate the pinned assets map (hashes from bytes)
+        run: node npm/scripts/gen-assets.mjs --dir assets --version "${GITHUB_REF_NAME#lanespec-v}" --out assets.json
+      - name: Stage the package with identity injected
+        run: |
+          set -euo pipefail
+          node npm/scripts/prepare-package.mjs --out pkg \
+            --scope "${{ steps.scope.outputs.scope }}" \
+            --version "${GITHUB_REF_NAME#lanespec-v}" \
+            --repository "${{ github.repository }}" \
+            --assets assets.json
+      - name: Publish to npm (OIDC trusted publishing, provenance auto-attached)
+        run: npm publish --provenance pkg
+      - name: Provenance assert (green publish without attestations is a bug)
+        run: |
+          sh npm/scripts/assert-attestations.sh \
+            --pkg "@${{ steps.scope.outputs.scope }}/lanespec" \
+            --version "${GITHUB_REF_NAME#lanespec-v}"

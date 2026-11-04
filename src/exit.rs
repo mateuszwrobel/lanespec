@@ -2,8 +2,11 @@
 //!
 //! ```text
 //!   0    success / nothing to report
-//!   1    generic failure or refusal (bad input, timeout while refusing)
-//!   3    audit found debris (orphan lanes / fleets / holders / stale worktrees)
+//!   1    generic failure or refusal (bad input, timeout while refusing,
+//!        a prune-orphans guard refusal)
+//!   3    debris found: audit's orphan lanes / fleets / holders / stale
+//!        worktrees, or prune-orphans' PROTECT lines (unattributable,
+//!        dirty-unlanded, ahead-unlanded)
 //!   4    launch refused: lane already exists and is live or done (reap first)
 //!   5    sweep refused: no --namespace / --class bound, or an empty one
 //!  64    usage error: the command line is wrong, or help named an absent topic
@@ -13,10 +16,15 @@
 
 /// Success.
 pub const OK: i32 = 0;
-/// Generic failure or refusal.
+/// Generic failure or refusal: bad input, a timeout while refusing, or a
+/// prune-orphans guard refusal (a removal was due and a guard kept the
+/// worktree).
 pub const BAD: i32 = 1;
-/// Audit found debris. Only `audit` emits this code: a `help` topic typo is a
-/// usage error (`USAGE`, 64), never a verdict code, so `3` has one meaning.
+/// Debris found. `audit` emits it for orphan lanes / fleets / holders /
+/// stale worktrees; `prune-orphans` emits it for its operator-visible
+/// PROTECT lines (unattributable, dirty-unlanded, ahead-unlanded). A
+/// `help` topic typo is a usage error (`USAGE`, 64), never a verdict
+/// code, so `3` has one meaning.
 pub const DEBRIS: i32 = 3;
 /// Usage error: the command line itself is wrong (unknown command, unknown
 /// flag, missing value), or `help` named a topic the manual does not have.

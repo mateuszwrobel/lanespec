@@ -18,6 +18,7 @@ table points at the golden test that pins it.
 | `plan [--json]` | Ordered recovery steps for the debris the audit finds. |
 | `sweep [--class C]` | Kill only parent-gone-proven processes; a bound is required. |
 | `unlock [DEADLINE]` | Resolve gate-lock holders: await live, kill orphan chains, refuse races. |
+| `prune-orphans [--dry-run] [--repo DIR]` | The orphan oracle (F-2r): classify every registered worktree and remove ONLY carriers whose POSITIVE owner attribution — the path named in a lane record — is proven dead by the process table. Removal fires only under this explicit verb, never automatically and never from a stale audit listing: every guard re-runs at removal time through the one guard site (freshness scan, main exclusion, clean, `origin/main` containment, bounded mount scan — a mount at or under the checkout, or an unreadable/timed-out mount table, refuses — salvage pin plus HEAD-reflog copy, plain `git worktree remove`, never `--force`). A present checkout named in no record is `PROTECT-UNATTRIBUTABLE`: shown, never removed. One named line per action; the vanished dir is the named prune class. |
 | `retry NAME --cmd CMD` | Detached retry ladder: yield-guard, spaced attempts, `.final` sentinel. |
 | `help [topic]` | Print the built-in manual (`commands`, `exit-codes`, `configuration`, `diagnostics`). |
 
@@ -45,6 +46,11 @@ table points at the golden test that pins it.
 | `sweep` (unbounded) | 5 | No `--class`/`--namespace` bound, or an empty bound. | `sweep_refuses_unbounded_kills_reparented_keeps_live` |
 | `sweep` (bounded) | 0 or 124 | Proven orphans killed; 124 when candidates survived the kill loop. | `sweep_refuses_unbounded_kills_reparented_keeps_live` |
 | `unlock` | 0 | Lock freed: live holder awaited, orphan chain killed. | `unlock_waits_for_live_holder_then_frees` |
+| `prune-orphans` (dead owner) | 0 | Attributed-dead carrier removed: `PRUNE-ORPHAN-OWNER` + the guard-site `PRUNE-*` lines, dir gone, record kept for `collect`. | `prune_orphans_removes_dead_owner_carrier` |
+| `prune-orphans` (live owner) | 0 | `PROTECT-LIVE` skip line; a live lane is healthy, not debris. | `prune_orphans_skips_live_lane` |
+| `prune-orphans` (debris) | 3 | `PROTECT-UNATTRIBUTABLE` / `PROTECT-DIRTY` / `PROTECT-AHEAD` — operator-visible debris, nothing removed. | `prune_orphans_attribution_unknown_protects`, `prune_orphans_dirty_unlanded_protects` |
+| `prune-orphans` (refusal) | 1 | A removal was due and a guard kept the worktree: mount holder, unreadable/timed-out mount table, busy gate lock. | `prune_orphans_mount_holder_refuses`, `prune_carrier_mount_holder_refuses` |
+| `prune-orphans` (listing) | 0 | `--dry-run` prints the classification and touches nothing — the vanished class is named, never pruned, in the listing. | `prune_orphans_dry_run_never_removes` |
 | `retry` (lands) | 0 | Attempt verified; `.final` carries the landed token. | `retry_detached_ladder_lands_then_fails` |
 | `retry` (yield) | 0 | A live sibling ladder owns the lane; this run yields. | `retry_same_name_concurrent_exactly_one_ladder` |
 | `help <topic>` | 0 | A known topic printed its page; the index prints with no topic. | `help_topics_exit_zero_unknown_exits_usage` |

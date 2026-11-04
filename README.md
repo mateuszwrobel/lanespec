@@ -54,6 +54,9 @@ audit [--json] [--repo DIR]                 debris report (exit 3 on debris)
 plan [--json] [--repo DIR]                  ordered recovery steps
 sweep [--class NAME]                        kill proven orphans (bound required)
 unlock [deadline-s]                         free the gate lock safely
+prune-orphans [--dry-run] [--repo DIR]      classify worktrees by owner; remove
+        only carriers attributed to lane records whose owner is proven dead
+        (never automatic, never --force, one named line per action)
 retry <name> --cmd CMD [--success-cmd CMD]  detached retry ladder
         [--attempts N] [--space S] [--inline]
 ```

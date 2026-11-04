@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 /// Verdict for a lane's worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,25 +70,33 @@ pub fn registered_worktrees(repo: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The repo runner convention (M8): every git subprocess starts with the
+/// hook's GIT_* seams stripped, so a fixture can never operate on the
+/// enclosing checkout.
+fn git_cmd(cwd: &Path, base: &str) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg(base)
+        .arg(cwd)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+    cmd
+}
+
 fn git(wt: &Path, args: &[&str]) -> Option<std::process::Output> {
-    Command::new("git")
-        .arg("-C")
-        .arg(wt)
-        .args(args)
-        .output()
-        .ok()
+    git_cmd(wt, "-C").args(args).output().ok()
 }
 
 /// Same probe anchored on the common dir instead of a live checkout — the
 /// shape that survives the target directory being gone (post-removal
 /// confirms, vanished-dir prune).
 fn git_common(gd: &Path, args: &[&str]) -> Option<std::process::Output> {
-    Command::new("git")
-        .arg("--git-dir")
-        .arg(gd)
-        .args(args)
-        .output()
-        .ok()
+    git_cmd(gd, "--git-dir").args(args).output().ok()
 }
 
 /// Absolute-path key used to match a recorded path against porcelain
@@ -135,6 +144,127 @@ enum GitCtx<'a> {
     CommonDir(&'a Path),
 }
 
+/// Porcelain entries of a live checkout as `(path, branch-line)` pairs with
+/// paths canonicalized to their realpath key. `None` when the probe failed.
+/// This is the oracle's enumeration source (M9): the worktree list, never a
+/// directory glob.
+pub(crate) fn porcelain_entries(repo: &Path) -> Option<Vec<(String, Option<String>)>> {
+    worktree_entries(GitCtx::Dir(repo))
+}
+
+/// True when `child` is `parent` itself or sits under it. Absolute paths
+/// only; the comparison is on path-component boundaries, never string
+/// prefixes that could match a sibling like `/var/tmp/wt-1x` under `/wt-1`.
+#[must_use]
+pub(crate) fn under(child: &str, parent: &str) -> bool {
+    let parent = parent.trim_end_matches('/');
+    let parent = if parent.is_empty() { "/" } else { parent };
+    child == parent || (child.starts_with(parent) && child.as_bytes().get(parent.len()) == Some(&b'/'))
+}
+
+/// Verdict of the bounded mount scan (F-2r B3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MountScan {
+    /// The scan answered inside its bound and found no mount touching the
+    /// checkout.
+    Clear,
+    /// At least one mount sits at or under the checkout, or binds a subtree
+    /// of it elsewhere: `n` counts the matched entries.
+    Mounted(usize),
+    /// The scan could not answer — unreadable source or timeout. Guard
+    /// unproven: the same fail-closed law as the lsof-timeout arm.
+    Failed(String),
+}
+
+/// The mountinfo path. `LANESPEC_MOUNTINFO` overrides `/proc/self/mountinfo`
+/// so the hermetic cells can feed the scan a fixture table; production reads
+/// the real one.
+#[must_use]
+pub(crate) fn mountinfo_path() -> PathBuf {
+    match std::env::var("LANESPEC_MOUNTINFO") {
+        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        _ => PathBuf::from("/proc/self/mountinfo"),
+    }
+}
+
+/// Bound of the mount scan: a hung `/proc` read must surface as a named
+/// refusal, never as a silent pass or an unbounded wait.
+const MOUNT_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Bounded bind-mount scan (F-2r B3): an idle container leg binds the
+/// checkout and keeps zero open fds — `lsof +D` is blind there. A mount
+/// whose mount point sits at or under the checkout, or whose source root is
+/// at or under the checkout (the bind of the checkout or a subtree of it,
+/// visible under a container path), marks the checkout held. Timeout or an
+/// unreadable table is `Failed` — the guard refuses, it never guesses.
+pub(crate) fn mount_scan(want: &str, mountinfo: &Path, timeout: Duration) -> MountScan {
+    let want = want.to_owned();
+    let path = mountinfo.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let out = match std::fs::read_to_string(&path) {
+            Ok(text) => Ok(scan_lines(&text, &want)),
+            Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let _ = tx.send(out);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(res)) => res,
+        Ok(Err(why)) => MountScan::Failed(why),
+        Err(_) => MountScan::Failed(format!("no answer within {}s", timeout.as_secs())),
+    }
+}
+
+/// Decode mountinfo's octal path escapes (`\040` space, `\011` tab,
+/// `\012` newline, `\134` backslash).
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let oct: String = it.by_ref().take(3).collect();
+        match oct.as_str() {
+            "040" => out.push(' '),
+            "011" => out.push('\t'),
+            "012" => out.push('\n'),
+            "134" => out.push('\\'),
+            other => {
+                out.push('\\');
+                out.push_str(other);
+            }
+        }
+    }
+    out
+}
+
+/// Classify one mountinfo table against the checkout realpath. Fields:
+/// `id parent major:minor root mountpoint opts ... - fstype source super`;
+/// the two paths that can name the checkout are `root` (bind source inside
+/// its filesystem) and `mountpoint` (where the mount sits).
+fn scan_lines(text: &str, want: &str) -> MountScan {
+    let mut hits = 0;
+    for line in text.lines() {
+        let mut it = line.split(' ');
+        let (Some(_id), Some(_parent), Some(_dev), Some(root), Some(mp)) =
+            (it.next(), it.next(), it.next(), it.next(), it.next())
+        else {
+            continue;
+        };
+        let (root, mp) = (unescape(root), unescape(mp));
+        if under(&mp, want) || under(&root, want) {
+            hits += 1;
+        }
+    }
+    if hits == 0 {
+        MountScan::Clear
+    } else {
+        MountScan::Mounted(hits)
+    }
+}
+
 /// The collect-side carrier removal: the worktree-side guards of the
 /// collect verb. The registry-side freshness guard lives
 /// with the collect verb itself. The shape follows the house removal
@@ -159,8 +289,26 @@ enum GitCtx<'a> {
 ///   — analysis lanes sit at the base and pass, unmerged lanes never):
 ///   `PRUNE-REFUSE not-contained`; an unreadable HEAD or an unresolved
 ///   `origin/main` is containment-unprovable and refuses.
+/// * a mount at or under the checkout, or a bind-mount root under it
+///   (F-2r B3, bounded scan): `PROTECT-MOUNT`; an unreadable or timed-out
+///   mount table is `PROTECT-MOUNT-SCAN`, the same fail-closed arm.
+///
+/// Before the plain removal the guard pins `refs/salvage/<head>` (r1 B1)
+/// and copies every not-yet-contained HEAD-reflog entry into salvage pins
+/// (r2 F1a, one `PRUNE-REFLOG` line), so a late commit stays reachable
+/// after the admin dir dies.
 #[must_use]
 pub fn prune_carrier(wt: &Path, anchor: Option<&Path>) -> Vec<String> {
+    prune_carrier_with(wt, anchor, &mountinfo_path())
+}
+
+/// Same guards with an explicit mountinfo table — the hermetic-test seam;
+/// production reaches it through [`prune_carrier`].
+pub(crate) fn prune_carrier_with(
+    wt: &Path,
+    anchor: Option<&Path>,
+    mountinfo: &Path,
+) -> Vec<String> {
     let mut lines = Vec::new();
     let disp = wt.display().to_string();
     let want = path_key(wt);
@@ -245,8 +393,29 @@ pub fn prune_carrier(wt: &Path, anchor: Option<&Path>) -> Vec<String> {
         return lines;
     }
 
+    // Bounded mount scan (F-2r B3): an idle container leg bind-mounts the
+    // checkout with zero open fds — lsof is blind there. A mount at or
+    // under the checkout, or a bind root under it, is a named refusal; so
+    // is a scan that cannot answer (fail-closed, same law as lsof-timeout).
+    match mount_scan(&want, mountinfo, MOUNT_SCAN_TIMEOUT) {
+        MountScan::Clear => {}
+        MountScan::Mounted(n) => {
+            lines.push(format!(
+                "PROTECT-MOUNT {disp} mounts={n} — a mount sits at or under the checkout — worktree kept"
+            ));
+            return lines;
+        }
+        MountScan::Failed(why) => {
+            lines.push(format!(
+                "PROTECT-MOUNT-SCAN {disp} — {why} — mount guard unproven, fail-closed — worktree kept"
+            ));
+            return lines;
+        }
+    }
+
     // Salvage pin BEFORE the removal (r1 B1): a commit made in the
     // check→remove window would otherwise die with the admin dir.
+    let mut pinned = vec![head.clone()];
     if !git(wt, &["update-ref", &format!("refs/salvage/{head}"), &head])
         .is_some_and(|o| o.status.success())
     {
@@ -256,6 +425,11 @@ pub fn prune_carrier(wt: &Path, anchor: Option<&Path>) -> Vec<String> {
         return lines;
     }
     lines.push(format!("PRUNE-PIN refs/salvage/{head} {head}"));
+
+    // Late commits the HEAD read missed stay reachable (r2 F1a).
+    if !reflog_copy(wt, &disp, &mut pinned, &mut lines) {
+        return lines;
+    }
 
     let common = git(wt, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .filter(|o| o.status.success())
@@ -308,6 +482,60 @@ pub fn prune_carrier(wt: &Path, anchor: Option<&Path>) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// The r2 F1a reflog-copy pass at the shared guard site: every non-zero
+/// entry of the carrier's HEAD reflog that exists as a commit, is not
+/// already pinned, and is not contained in `origin/main` gets a salvage
+/// pin BEFORE the removal — a late commit the HEAD read missed stays
+/// reachable after the admin dir dies. One `PRUNE-REFLOG` line per pass;
+/// a pin failure pushes its own refusal and reports `false`.
+fn reflog_copy(wt: &Path, disp: &str, pinned: &mut Vec<String>, lines: &mut Vec<String>) -> bool {
+    let logs = git(wt, &["rev-parse", "--absolute-git-dir"])
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()).join("logs/HEAD"));
+    let text = match logs.as_deref().and_then(|l| std::fs::read_to_string(l).ok()) {
+        Some(t) => t,
+        None => {
+            lines.push(format!(
+                "PRUNE-REFLOG {disp} scanned=0 pinned=0 — no HEAD reflog to copy"
+            ));
+            return true;
+        }
+    };
+    let mut scanned = 0;
+    let mut pinned_n = 0;
+    for entry in text.lines() {
+        let new = match entry.split(' ').nth(1) {
+            Some(n) => n,
+            None => continue,
+        };
+        if new.len() != 40 || new.bytes().any(|b| !b.is_ascii_hexdigit()) {
+            continue;
+        }
+        if new.chars().all(|c| c == '0') {
+            continue;
+        }
+        scanned += 1;
+        if pinned.iter().any(|p| p == new) {
+            continue;
+        }
+        if !git(wt, &["cat-file", "-e", &format!("{new}^{{commit}}")]).is_some_and(|o| o.status.success()) {
+            continue;
+        }
+        if contained(wt, new) == Some(true) {
+            continue;
+        }
+        if !git(wt, &["update-ref", &format!("refs/salvage/{new}"), new]).is_some_and(|o| o.status.success()) {
+            lines.push("PRUNE-REFUSE pin-failed — no salvage pin, fail-closed — worktree kept".to_string());
+            return false;
+        }
+        lines.push(format!("PRUNE-PIN refs/salvage/{new} {new}"));
+        pinned.push(new.to_owned());
+        pinned_n += 1;
+    }
+    lines.push(format!("PRUNE-REFLOG {disp} scanned={scanned} pinned={pinned_n}"));
+    true
 }
 
 /// `merge-base --is-ancestor <head> origin/main` from a live checkout:
@@ -380,6 +608,13 @@ mod tests {
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
             .env("GIT_COMMITTER_EMAIL", "t@t")
+            // The fixtures are hermetic: no hooks may run (the ambient
+            // core.hooksPath of the source checkout would otherwise leak in).
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -577,5 +812,46 @@ mod tests {
         assert_eq!(lines.len(), 1, "{}", lines.join("\n"));
         assert!(lines[0].starts_with("PRUNE-REFUSE main-checkout"), "{}", lines[0]);
         assert!(work.exists());
+    }
+
+    /// The mount guard (F-2r B3): a clean, contained carrier whose dir
+    /// carries a mount is a named PROTECT-MOUNT refusal — the idle
+    /// container-leg class `lsof` cannot see. An unreadable table is the
+    /// same fail-closed arm under the PROTECT-MOUNT-SCAN name.
+    #[test]
+    fn prune_carrier_mount_holder_refuses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        fs::create_dir(&work).unwrap();
+        repo_with_origin(&work);
+        let wt = tmp.path().join("wt-mnt");
+        git_in(&work, &["worktree", "add", "--detach", wt.to_str().unwrap(), "HEAD"]);
+
+        // A bind of the checkout visible under a container path: the ROOT
+        // field sits under the checkout — the scan's second arm.
+        let held = tmp.path().join("mountinfo-held");
+        fs::write(
+            &held,
+            format!(
+                "36 35 0:30 {} /srv/leg rw relatime shared:1 - ext4 /dev/sda1 rw\n",
+                path_key(&wt)
+            ),
+        )
+        .unwrap();
+        let lines = prune_carrier_with(&wt, None, &held);
+        assert_eq!(lines.len(), 1, "{}", lines.join("\n"));
+        assert!(lines[0].starts_with("PROTECT-MOUNT "), "{}", lines[0]);
+        assert!(wt.is_dir(), "a mounted checkout is never removed");
+
+        // The fail-closed arm: an unreadable mount table is a refusal too.
+        let gone = tmp.path().join("mountinfo-missing");
+        let lines = prune_carrier_with(&wt, None, &gone);
+        assert_eq!(lines.len(), 1, "{}", lines.join("\n"));
+        assert!(
+            lines[0].starts_with("PROTECT-MOUNT-SCAN"),
+            "{}",
+            lines[0]
+        );
+        assert!(wt.is_dir(), "an unanswerable scan never removes");
     }
 }

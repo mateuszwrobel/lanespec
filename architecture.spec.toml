@@ -1,15 +1,15 @@
 # lanespec architecture spec — verified by `archspec verify --strict` in
 # lanespec/public/lanespec/run-unit-tests.sh.
 #
-# Shape of the real tree (from `archspec scan`: 28 modules, 79 module edges,
-# acyclic): sixteen library modules with a one-way layering. The scan shows no
+# Shape of the real tree (from `archspec scan`): seventeen library modules
+# with a one-way layering. The scan shows no
 # mutual module edge, so no boundary folding is needed — the four boundaries
 # below run strictly top-down.
 #
 #   cli        -> commands, infra, foundations   argument parsing, dispatch,
 #                the binary entrypoint, the built-in manual
 #   commands   -> infra, foundations             subcommand implementations
-#                (start/status/logs/audit/kill/sweep/unlock/retry/plan)
+#                (start/status/logs/audit/kill/sweep/unlock/retry/plan/prune)
 #   infra      -> (nothing)                      /proc reading + registry +
 #                                                test-support fakes
 #   foundations-> (nothing)                      config resolution, exit
@@ -17,6 +17,13 @@
 
 [project]
 language = "rust"
+
+# The payload ships the npm downloader package under npm/ — node sources
+# with their own marker. Declared here so the language agreement check
+# reads the tree honestly instead of failing it.
+excluded_sources = [
+  { path = "npm", reason = "the npm downloader package — node sources with their own marker, verified by npm/test/run-npm-tests.sh" },
+]
 
 # cli — argument parsing, dispatch and the binary entrypoint. The binary unit
 # (`lanespec-bin`) links the library as a unit-tier edge with no module
@@ -31,7 +38,8 @@ matches = { units = ["lanespec-bin"], modules = ["lanespec::cli", "lanespec::hel
 depend_on = ["commands", "infra", "foundations"]
 
 # commands — the subcommand implementations: lifecycle (start/status/logs/wait),
-# audit, orphan detection, plan, retry, sweep, unlock.
+# audit, orphan detection, plan, prune-orphans (the F-2r oracle), retry,
+# sweep, unlock.
 [[module]]
 name = "commands"
 matches = { modules = [
@@ -39,6 +47,7 @@ matches = { modules = [
   "lanespec::lifecycle",
   "lanespec::orphan",
   "lanespec::plan",
+  "lanespec::prune",
   "lanespec::retry",
   "lanespec::sweep",
   "lanespec::unlock",
@@ -81,10 +90,10 @@ modules = ["cli", "commands", "infra", "foundations"]
 severity = "error"
 
 # --- Public API ---
-# The library crate root re-exports exactly the sixteen modules. Exit codes
+# The library crate root re-exports exactly the seventeen modules. Exit codes
 # are reached through `exit`, paths through `worktree`; nothing else is
 # public at the crate root.
 [[constraint]]
 type = "public_api_allowlist"
-allowed = ["audit", "cli", "config", "exit", "fake", "glob", "help", "lifecycle", "orphan", "plan", "procfs", "registry", "retry", "sweep", "unlock", "worktree"]
+allowed = ["audit", "cli", "config", "exit", "fake", "glob", "help", "lifecycle", "orphan", "plan", "prune", "procfs", "registry", "retry", "sweep", "unlock", "worktree"]
 severity = "error"

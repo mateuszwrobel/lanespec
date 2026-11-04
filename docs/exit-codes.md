@@ -6,7 +6,7 @@ Every command obeys one contract. Scripts may branch on these numbers.
 |-----:|---------|------------|
 | 0    | Success, or nothing to report | all commands |
 | 1    | Generic failure or refusal: bad input, unknown lane/class, wait-timeout while a live holder refused, a collect refusal (record kept, nothing removed), a live surfacer during unlock | all commands |
-| 3    | `audit` found debris: an orphan lane, an orphan class fleet, an orphan lock holder, or a stale worktree. Only `audit` emits this code; it has exactly one meaning. | `audit` |
+| 3    | Debris found: by `audit` — an orphan lane, an orphan class fleet, an orphan lock holder, or a stale worktree; by `prune-orphans` — an operator-visible `PROTECT-*` line (unattributable checkout, dirty-unlanded, ahead-unlanded). Only these two emit this code; it has exactly one meaning. | `audit`, `prune-orphans` |
 | 4    | Launch refused: the lane already exists (live or done) — reap it first | `launch` |
 | 5    | Sweep refused: no `--namespace` / `--class` bound was given, or a given bound was empty/whitespace-only | `sweep` |
 | 64   | Usage error: the command line itself is wrong (unknown command, unknown flag, missing value), `help` named a topic the manual does not have, or `collect` was given `<name>` and `--all` together or neither. `--help` and `--version` print and exit 0 | parser, `help`, `collect` |
@@ -21,7 +21,11 @@ Notes:
   that READS but is then refused — bad TOML, unknown keys, a match-everything
   class anchor — stays a refusal while working: exit 1.
 - `status` and `plan` exit 0 even when they REPORT debris; only `audit`
-  encodes debris in the exit code.
+  and `prune-orphans` encode debris in the exit code. A live owner the
+  oracle skips (`PROTECT-LIVE`) is a printed skip, not debris: exit 0.
+- A `prune-orphans` guard refusal — mount holder, unreadable mount table,
+  busy gate lock — is exit 1 with one named line: a removal was due and
+  the guard kept the worktree. `--dry-run` never reaches a guard.
 - A `wait` on a lane that died without `.done` exits 1 with a DEAD notice:
   run `reap` or `audit`.
 - An unreadable process fd table makes `audit`/`unlock` fail with 1 —
@@ -36,6 +40,7 @@ Notes:
   session, or after the session has moved on.
 - A wrong command line (unknown command, unknown flag, missing value) and a
   `help` topic that is not in the manual both exit 64: a usage mistake is
-  never a verdict code. `audit` is the only emitter of `3`, so a `3` reaching a
+  never a verdict code. `audit` and `prune-orphans` are the only emitters
+  of `3`, so a `3` reaching a
   script always means debris — including a `3` recorded by a lane and
   re-surfaced through `wait`.

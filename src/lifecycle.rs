@@ -573,12 +573,27 @@ pub fn collect<P: Procfs>(cfg: &Config, proc: &P, only: Option<&str>) -> Result<
 /// OLDER record that is still live on the path also refuses (a process
 /// could commit into the check→remove window). Everything else hands the
 /// path to the worktree-side guards in [`worktree::prune_carrier`].
-fn carrier_prune<P: Procfs>(
+/// Shared with the orphan oracle ([`crate::prune`]) so the freshness
+/// guards live in exactly one place.
+pub(crate) fn carrier_prune<P: Procfs>(
     reg: &Registry,
     proc: &P,
     name: &str,
     launched: Option<&str>,
     wt: &Path,
+) -> Vec<String> {
+    carrier_prune_with(reg, proc, name, launched, wt, &worktree::mountinfo_path())
+}
+
+/// Same guards with an explicit mountinfo table — the hermetic-test seam;
+/// production reaches it through [`carrier_prune`].
+pub(crate) fn carrier_prune_with<P: Procfs>(
+    reg: &Registry,
+    proc: &P,
+    name: &str,
+    launched: Option<&str>,
+    wt: &Path,
+    mountinfo: &Path,
 ) -> Vec<String> {
     let want = worktree::path_key(wt);
     for other in reg.list() {
@@ -626,7 +641,7 @@ fn carrier_prune<P: Procfs>(
         }
     }
     let anchor = std::env::current_dir().ok();
-    worktree::prune_carrier(wt, anchor.as_deref())
+    worktree::prune_carrier_with(wt, anchor.as_deref(), mountinfo)
 }
 
 /// Whether a `launched` stamp is comparable by lexicographic order: the
@@ -1175,6 +1190,13 @@ mod tests {
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
             .env("GIT_COMMITTER_EMAIL", "t@t")
+            // The fixtures are hermetic: no hooks may run (the ambient
+            // core.hooksPath of the source checkout would otherwise leak in).
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -1191,6 +1213,9 @@ mod tests {
         std::fs::create_dir(&origin).unwrap();
         git_in(&origin, &["init", "-q", "--bare"]);
         git_in(dir, &["init", "-q", "-b", "main"]);
+        // Fixture repos run without hooks (the source checkout's core.
+        // hooksPath must never be inherited).
+        git_in(dir, &["-c", "core.hooksPath=/dev/null", "config", "core.hooksPath", "/dev/null"]);
         std::fs::write(dir.join("f"), "1\n").unwrap();
         git_in(dir, &["add", "-A"]);
         git_in(dir, &["commit", "-q", "-m", "one"]);

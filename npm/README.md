@@ -10,7 +10,8 @@ This package is a downloader: it does not contain the binary. It pins the
 release assets of the matching version, downloads the one built for your
 platform and architecture, verifies it against the pinned SHA-256 hash,
 caches it, and runs it. The npm channel ships from this repository's
-releases and is available once the release carries platform binaries.
+GitHub releases: every release carries the platform binaries this package
+downloads.
 
 ## Install
 

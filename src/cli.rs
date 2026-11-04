@@ -12,6 +12,7 @@ use crate::help;
 use crate::lifecycle;
 use crate::plan;
 use crate::procfs::RealProcfs;
+use crate::prune;
 use crate::retry;
 use crate::sweep;
 use crate::unlock;
@@ -105,6 +106,19 @@ enum Cmd {
     Unlock {
         /// Wait deadline for a live holder, seconds.
         deadline: Option<u64>,
+    },
+    /// The orphan oracle: classify every registered worktree by owner and
+    /// remove ONLY carriers whose positive owner attribution (a lane record
+    /// naming the path) is proven dead. Removal fires only under this
+    /// explicit verb, never automatically; `--dry-run` keeps the listing
+    /// read-only. Every removal or refusal prints one named line.
+    PruneOrphans {
+        /// Print the classification listing; never remove or prune.
+        #[arg(long)]
+        dry_run: bool,
+        /// Repo whose worktree list is classified (default: cwd).
+        #[arg(long)]
+        repo: Option<PathBuf>,
     },
     /// Detached retry ladder: yield-guard, spaced attempts, .final sentinel.
     Retry {
@@ -216,6 +230,9 @@ fn dispatch(cli: Cli) -> Result<i32> {
             std::time::Duration::from_secs(120),
         ),
         Cmd::Unlock { deadline } => unlock::unlock(&cfg, &proc, deadline.unwrap_or(60)),
+        Cmd::PruneOrphans { dry_run, repo } => {
+            prune::prune_orphans(&cfg, &proc, &repo_path(repo)?, dry_run)
+        }
         Cmd::Retry {
             name,
             cmd,

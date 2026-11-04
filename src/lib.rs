@@ -16,6 +16,7 @@ pub mod lifecycle;
 pub mod orphan;
 pub mod plan;
 pub mod procfs;
+pub mod prune;
 pub mod registry;
 pub mod retry;
 pub mod sweep;
