@@ -13,6 +13,10 @@ caches it, and runs it. The npm channel ships from this repository's
 GitHub releases: every release carries the platform binaries this package
 downloads.
 
+Availability today: released binaries ship for Linux only — `linux-x64`
+and `linux-arm64`. macOS and Windows support is planned; on those hosts the
+install prints the supported keys and the first run fails there, loudly.
+
 ## Install
 
 ```sh
@@ -20,10 +24,10 @@ npm install "@<scope>/lanespec"        # <scope> is the scope the release announ
 npx "@<scope>/lanespec" status         # or run it without installing
 ```
 
-On a supported host (`linux`, `darwin` or `win32`; `x64` or `arm64`) the
-install script fetches the binary immediately. If lifecycle scripts are
-skipped (`npm install --ignore-scripts`, or a package-manager script policy),
-nothing is lost: the first run fetches the binary then.
+On a supported host (`linux`; `x64` or `arm64`) the install script fetches
+the binary immediately. If lifecycle scripts are skipped (`npm install
+--ignore-scripts`, or a package-manager script policy), nothing is lost: the
+first run fetches the binary then.
 
 ## What gets downloaded
 
@@ -40,13 +44,11 @@ names the mismatch. There is no warn-and-continue path.
 
 ## Honest signing note
 
-The release binaries carry no Authenticode signature and no Apple Developer
-ID signature. Windows SmartScreen and macOS Gatekeeper may warn on first run;
-that is expected and is what the pinned SHA-256 verification is for. npm
-provenance attests that the published tarball came from this repository's
-published release pipeline — it attests the tarball's origin, not signed
-binaries inside it. Verify a release asset yourself with its `.sha256`
-sidecar and `sha256sum -c` at any time.
+The release binaries carry no signature. Verification rests on the pinned
+SHA-256 hash: npm provenance attests that the published tarball came from
+this repository's published release pipeline — it attests the tarball's
+origin, not a signed binary inside it. Verify a release asset yourself with
+its `.sha256` sidecar and `sha256sum -c` at any time.
 
 ## Failure messages
 

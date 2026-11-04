@@ -1,5 +1,5 @@
-// Finding B3 (exact five-key matrix law): the generator maps the release's
-// full asset name list to EXACTLY five keys — no globs, no deb names
+// Finding B3 (exact two-key matrix law): the generator maps the release's
+// full asset name list to EXACTLY two keys — no globs, no deb names
 // anywhere in the map — and a name list missing any target fails closed.
 
 import assert from "node:assert/strict";
@@ -17,9 +17,6 @@ function releaseDirWithAllNames(dir) {
   const installables = [
     `lanespec-${v}-x86_64-unknown-linux-musl.tar.gz`,
     `lanespec-${v}-aarch64-unknown-linux-gnu.tar.gz`,
-    `lanespec-${v}-x86_64-apple-darwin.tar.gz`,
-    `lanespec-${v}-aarch64-apple-darwin.tar.gz`,
-    `lanespec-${v}-x86_64-pc-windows-msvc.zip`,
     `lanespec_${v}_amd64.deb`,
     `lanespec_${v}_arm64.deb`,
   ];
@@ -39,20 +36,17 @@ function generate(dir, out, omit = null) {
 
 const GEN = new URL("../scripts/gen-assets.mjs", import.meta.url).pathname;
 
-test("matrix law: exactly five keys with the exact names", () => {
+test("matrix law: exactly two keys with the exact names", () => {
   assert.deepEqual(Object.keys(matrix(VER)).sort(), [...MATRIX_KEYS].sort());
   const m = matrix(VER);
   assert.equal(m["linux-x64"], `lanespec-${VER}-x86_64-unknown-linux-musl.tar.gz`);
   assert.equal(m["linux-arm64"], `lanespec-${VER}-aarch64-unknown-linux-gnu.tar.gz`);
-  assert.equal(m["darwin-x64"], `lanespec-${VER}-x86_64-apple-darwin.tar.gz`);
-  assert.equal(m["darwin-arm64"], `lanespec-${VER}-aarch64-apple-darwin.tar.gz`);
-  assert.equal(m["win32-x64"], `lanespec-${VER}-x86_64-pc-windows-msvc.zip`);
   for (const name of Object.values(m)) {
     assert.ok(!name.endsWith(".deb"), `no deb in the map: ${name}`);
   }
 });
 
-test("full 14-name release list generates exactly five hashed keys", () => {
+test("full 8-name release list generates exactly two hashed keys", () => {
   const dir = mkTmp("npm-matrix-");
   releaseDirWithAllNames(dir);
   const out = path.join(dir, "assets.json");
@@ -77,9 +71,9 @@ test("minus-one-platform fails closed naming the missing key", () => {
   const dir = mkTmp("npm-matrix-");
   releaseDirWithAllNames(dir);
   const out = path.join(dir, "assets.json");
-  const res = generate(dir, out, "darwin-arm64");
+  const res = generate(dir, out, "linux-arm64");
   assert.notEqual(res.status, 0);
-  assert.match(res.stderr, /darwin-arm64/);
-  assert.match(res.stderr, new RegExp(`lanespec-${VER}-aarch64-apple-darwin\\.tar\\.gz`));
+  assert.match(res.stderr, /linux-arm64/);
+  assert.match(res.stderr, new RegExp(`lanespec-${VER}-aarch64-unknown-linux-gnu\\.tar\\.gz`));
   assert.ok(!fs.existsSync(out), "no assets.json on a missing key");
 });

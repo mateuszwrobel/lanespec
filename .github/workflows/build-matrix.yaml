@@ -1,7 +1,7 @@
 name: Build lanespec binaries (reusable matrix)
 
 # Reusable build matrix (the exact shape the release machinery runs): the
-# publish-gate plus the five platform builds. Called on every release tag by
+# publish-gate plus the two Linux builds. Called on every release tag by
 # release.yml, and callable on any ref by maintainers (workflow_dispatch) to
 # rehearse a matrix without publishing anything — this workflow has NO release
 # job, NO npm job and writes nothing outside its own run artifacts.
@@ -145,78 +145,3 @@ jobs:
             lanespec-*.tar.gz.sha256
             lanespec_*.deb
             lanespec_*.deb.sha256
-
-  build-macos-x86_64:
-    needs: publish-gate
-    runs-on: macos-26-intel
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.99.0"
-          targets: x86_64-apple-darwin
-      - run: cargo build --release --target x86_64-apple-darwin
-      - name: Package
-        run: |
-          set -euo pipefail
-          ver="${LANESPEC_TAG#lanespec-v}"
-          pkg="lanespec-${ver}-x86_64-apple-darwin.tar.gz"
-          tar -C target/x86_64-apple-darwin/release -czf "$pkg" lanespec
-          shasum -a 256 "$pkg" > "$pkg.sha256"
-      - uses: actions/upload-artifact@v4
-        with:
-          if-no-files-found: error
-          name: macos-x86_64
-          path: lanespec-*
-
-  build-macos-aarch64:
-    needs: publish-gate
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.99.0"
-          targets: aarch64-apple-darwin
-      - run: cargo build --release --target aarch64-apple-darwin
-      - name: Package
-        run: |
-          set -euo pipefail
-          ver="${LANESPEC_TAG#lanespec-v}"
-          pkg="lanespec-${ver}-aarch64-apple-darwin.tar.gz"
-          tar -C target/aarch64-apple-darwin/release -czf "$pkg" lanespec
-          shasum -a 256 "$pkg" > "$pkg.sha256"
-      - uses: actions/upload-artifact@v4
-        with:
-          if-no-files-found: error
-          name: macos-aarch64
-          path: lanespec-*
-
-  build-windows-x86_64:
-    needs: publish-gate
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.99.0"
-      - run: cargo build --release
-      - name: Package
-        shell: pwsh
-        run: |
-          $ver = $env:LANESPEC_TAG -replace '^lanespec-v', ''
-          $exe = "target/release/lanespec.exe"
-          $zip = "lanespec-$ver-x86_64-pc-windows-msvc.zip"
-          Compress-Archive -Path $exe -DestinationPath $zip
-          # Portable sidecar shape — hash, two spaces, filename, LF — so the
-          # asset passes `sha256sum -c` like every other platform's sidecar
-          # (Set-Content would write CRLF without the filename: not verifiable).
-          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
-          # $PWD must be joined explicitly: .NET's current directory does not
-          # follow PowerShell's provider location.
-          [System.IO.File]::WriteAllText((Join-Path $PWD.Path "$zip.sha256"), "$hash  $zip`n")
-      - uses: actions/upload-artifact@v4
-        with:
-          if-no-files-found: error
-          name: windows-x86_64
-          path: lanespec-*

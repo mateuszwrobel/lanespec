@@ -16,10 +16,10 @@ permissions:
   contents: write
 
 jobs:
-  # The publish-gate and the five platform builds live in the reusable
+  # The publish-gate and the two Linux builds live in the reusable
   # matrix so a rehearsal can run the identical jobs on an untagged ref
   # without ever reaching this file's release/npm jobs. Needs graph order:
-  # gate → five builds → release → publish-npm.
+  # gate → two Linux builds → release → publish-npm.
   build-matrix:
     uses: ./.github/workflows/build-matrix.yaml
     with:
@@ -103,7 +103,7 @@ jobs:
             exit 1
           fi
           echo "scope=${NPM_SCOPE}" >> "$GITHUB_OUTPUT"
-      - name: Download the five matrix assets by exact name (fail closed)
+      - name: Download the two Linux matrix assets by exact name (fail closed)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -112,10 +112,7 @@ jobs:
           mkdir -p assets
           for name in \
             "lanespec-${ver}-x86_64-unknown-linux-musl.tar.gz" \
-            "lanespec-${ver}-aarch64-unknown-linux-gnu.tar.gz" \
-            "lanespec-${ver}-x86_64-apple-darwin.tar.gz" \
-            "lanespec-${ver}-aarch64-apple-darwin.tar.gz" \
-            "lanespec-${ver}-x86_64-pc-windows-msvc.zip"; do
+            "lanespec-${ver}-aarch64-unknown-linux-gnu.tar.gz"; do
             if ! gh release download "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" -D assets -p "$name"; then
               echo "publish-npm: the release carries no asset named $name — failing closed, no package version is published" >&2
               exit 1
@@ -134,8 +131,8 @@ jobs:
             sha256sum -c "${sidecar}"
             found=$(( found + 1 ))
           done
-          # One sidecar per installable: five archives plus two debs.
-          [ "${found}" -ge 7 ] || { echo "publish-npm: only ${found} sidecars on the release page — expected at least one per installable" >&2; exit 1; }
+          # One sidecar per installable: two archives plus two debs.
+          [ "${found}" -ge 4 ] || { echo "publish-npm: only ${found} sidecars on the release page — expected at least one per installable" >&2; exit 1; }
       - name: Generate the pinned assets map (hashes from bytes)
         run: node npm/scripts/gen-assets.mjs --dir assets --version "${GITHUB_REF_NAME#lanespec-v}" --out assets.json
       - name: Stage the package with identity injected

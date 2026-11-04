@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import https from "node:https";
 import { spawnSync } from "node:child_process";
-import { TAG_PREFIX } from "./matrix.mjs";
+import { TAG_PREFIX, MATRIX_KEYS } from "./matrix.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const LOCK_STALE_MS = 15 * 60 * 1000;
@@ -142,7 +142,10 @@ export function contractLines({ version, key, url }) {
 }
 
 function missingKeyLines(version, key) {
-  return [`lanespec@${version}: no release asset for ${key}`];
+  return [
+    `lanespec@${version}: no release asset for ${key}`,
+    `  supported platforms: ${MATRIX_KEYS.join(", ")} — macOS and Windows support is planned`,
+  ];
 }
 
 async function acquireLock(lockDir) {
@@ -176,8 +179,8 @@ async function acquireLock(lockDir) {
 }
 
 function extractArchive(archivePath, archiveName, stageDir, key) {
-  // tarballs are gzipped tar; the windows asset is a zip, which bsdtar —
-  // present on every supported windows host since Windows 10 — extracts.
+  // tarballs are gzipped tar; a future windows asset would ship a zip, which
+  // bsdtar — present on windows hosts since Windows 10 — extracts.
   const args =
     key === "win32-x64"
       ? ["-xf", archivePath, "-C", stageDir]

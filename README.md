@@ -35,8 +35,10 @@ npm install "@<scope>/lanespec"    # <scope> is the scope the release announces
 npx "@<scope>/lanespec" status     # or run it without installing
 ```
 
-See [npm/README.md](npm/README.md) for how the npm package fetches and
-verifies the binary.
+Released binaries ship for Linux only today — `linux-x64` and `linux-arm64`.
+macOS and Windows support is planned. See
+[npm/README.md](npm/README.md) for how the npm package fetches and verifies
+the binary.
 
 ## Usage
 

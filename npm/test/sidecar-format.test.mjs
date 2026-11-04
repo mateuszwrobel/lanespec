@@ -23,8 +23,8 @@ test("the portable 'hash  filename' LF format passes sha256sum -c; the legacy wi
   fs.writeFileSync(asset, "zip-bytes");
   const hash = sha256Hex(fs.readFileSync(asset));
 
-  // Portable format (what every asset — linux, macos, and windows from this
-  // change on — ships): hash, two spaces, filename, LF.
+  // Portable format (what every shipped asset carries): hash, two spaces,
+  // filename, LF.
   const portable = path.join(dir, `${path.basename(asset)}.sha256`);
   fs.writeFileSync(portable, `${hash}  ${path.basename(asset)}\n`);
   const ok = spawnSync("sha256sum", ["-c", portable], { cwd: dir, encoding: "utf8" });

@@ -1,8 +1,9 @@
-// Publish-time generator: builds assets.json from the exact five-key matrix
-// over the release's asset NAME LIST with hashes computed from the DOWNLOADED
-// ASSET BYTES (never by parsing a sidecar). Fails closed naming the missing
-// key when any target's asset is absent. deb, pkg and zst names cannot appear
-// in the map by construction — the matrix law names them nowhere.
+// Publish-time generator: builds assets.json from the two-key matrix in
+// lib/matrix.mjs (the single source of truth) over the release's asset NAME
+// LIST with hashes computed from the DOWNLOADED ASSET BYTES (never by parsing
+// a sidecar). Fails closed naming the missing key when any target's asset is
+// absent. deb, pkg and zst names cannot appear in the map by construction —
+// the matrix law names them nowhere.
 
 // usage: node gen-assets.mjs --dir <assets-dir> --version <ver> [--out <file>]
 

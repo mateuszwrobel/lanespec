@@ -81,7 +81,7 @@ export function fixturePackage({
   return dir;
 }
 
-/// The full five-key asset map built from fake tarballs in dir.
+/// The full two-key asset map built from fake tarballs in dir.
 export function fixtureAssets(dir, version, { omitKey = null } = {}) {
   const expected = matrix(version);
   const assets = {};
