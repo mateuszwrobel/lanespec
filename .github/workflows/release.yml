@@ -18,6 +18,8 @@ jobs:
           fetch-tags: true
 
       - name: Create the release page from the annotated tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           notes="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")"

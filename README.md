@@ -20,6 +20,24 @@ still running, what is orphaned debris, and in which order to recover it.
 - Pattern scans exclude own pid and ancestors, so the tool can never match
   its own lineage.
 
+## Install
+
+From a checkout of this repository:
+
+```sh
+cargo install --path .
+```
+
+Or fetch a released binary through npm:
+
+```sh
+npm install "@<scope>/lanespec"    # <scope> is the scope the release announces
+npx "@<scope>/lanespec" status     # or run it without installing
+```
+
+See [npm/README.md](npm/README.md) for how the npm package fetches and
+verifies the binary.
+
 ## Usage
 
 ```text
