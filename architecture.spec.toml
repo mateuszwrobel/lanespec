@@ -1,0 +1,90 @@
+# lanespec architecture spec — verified by `archspec verify --strict` in
+# lanespec/public/lanespec/run-unit-tests.sh.
+#
+# Shape of the real tree (from `archspec scan`: 28 modules, 79 module edges,
+# acyclic): sixteen library modules with a one-way layering. The scan shows no
+# mutual module edge, so no boundary folding is needed — the four boundaries
+# below run strictly top-down.
+#
+#   cli        -> commands, infra, foundations   argument parsing, dispatch,
+#                the binary entrypoint, the built-in manual
+#   commands   -> infra, foundations             subcommand implementations
+#                (start/status/logs/audit/kill/sweep/unlock/retry/plan)
+#   infra      -> (nothing)                      /proc reading + registry +
+#                                                test-support fakes
+#   foundations-> (nothing)                      config resolution, exit
+#                                                codes, globbing, worktree paths
+
+[project]
+language = "rust"
+
+# cli — argument parsing, dispatch and the binary entrypoint. The binary unit
+# (`lanespec-bin`) links the library as a unit-tier edge with no module
+# endpoints, so the unit claim here owns that edge's source. The built-in
+# manual (`help`) is pure output with no dependencies, so it shares this
+# boundary — the binary's use of it is internal to `cli`.
+[[module]]
+name = "cli"
+matches = { units = ["lanespec-bin"], modules = ["lanespec::cli", "lanespec::help"] }
+
+[module.allowed]
+depend_on = ["commands", "infra", "foundations"]
+
+# commands — the subcommand implementations: lifecycle (start/status/logs/wait),
+# audit, orphan detection, plan, retry, sweep, unlock.
+[[module]]
+name = "commands"
+matches = { modules = [
+  "lanespec::audit",
+  "lanespec::lifecycle",
+  "lanespec::orphan",
+  "lanespec::plan",
+  "lanespec::retry",
+  "lanespec::sweep",
+  "lanespec::unlock",
+] }
+
+[module.allowed]
+depend_on = ["infra", "foundations"]
+
+# infra — process inspection (/proc), the lane registry, and the fakes the
+# unit tests substitute for /proc reads. registry and fake both read procfs;
+# that edge stays internal to this boundary.
+[[module]]
+name = "infra"
+matches = { modules = ["lanespec::procfs", "lanespec::registry", "lanespec::fake"] }
+
+[module.allowed]
+depend_on = []
+
+# foundations — the shared vocabulary: configuration, exit codes, glob
+# matching, worktree paths. The library facade unit (`lanespec`) is claimed
+# here by the unit fallback. Nothing below depends upward.
+[[module]]
+name = "foundations"
+matches = { units = ["lanespec"], modules = [
+  "lanespec::config",
+  "lanespec::exit",
+  "lanespec::glob",
+  "lanespec::worktree",
+] }
+
+[module.allowed]
+depend_on = []
+
+# --- Cycles ---
+# Acyclic at every level: the scan shows no mutual module edge, so cli ->
+# commands -> infra/foundations is the only direction edges move in.
+[[constraint]]
+type = "no_cycles"
+modules = ["cli", "commands", "infra", "foundations"]
+severity = "error"
+
+# --- Public API ---
+# The library crate root re-exports exactly the sixteen modules. Exit codes
+# are reached through `exit`, paths through `worktree`; nothing else is
+# public at the crate root.
+[[constraint]]
+type = "public_api_allowlist"
+allowed = ["audit", "cli", "config", "exit", "fake", "glob", "help", "lifecycle", "orphan", "plan", "procfs", "registry", "retry", "sweep", "unlock", "worktree"]
+severity = "error"

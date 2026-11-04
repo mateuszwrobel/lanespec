@@ -1,0 +1,3 @@
+[profile.default]
+# A slow test warns at 80s and is killed after 3 more periods (240s total).
+slow-timeout = { period = "80s", terminate-after = 3 }

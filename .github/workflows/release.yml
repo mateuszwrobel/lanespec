@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'lanespec-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create the release page from the annotated tag
+        run: |
+          set -euo pipefail
+          notes="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")"
+          gh release create "${GITHUB_REF_NAME}" --verify-tag \
+            --title "lanespec ${GITHUB_REF_NAME}" \
+            --notes "${notes}" \
+            || gh release edit "${GITHUB_REF_NAME}" \
+              --title "lanespec ${GITHUB_REF_NAME}" \
+              --notes "${notes}"
